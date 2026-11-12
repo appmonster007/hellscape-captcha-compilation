@@ -69,6 +69,7 @@
   .btn.spin svg{animation:spin .6s linear}
   .msg{flex:1;min-width:120px;font-size:14px;color:var(--muted)}
   .msg.bad{color:var(--bad)} .msg.ok{color:var(--ok)}
+  .hintsw{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--muted);cursor:pointer;user-select:none;padding:0 4px}
   .hint{font-size:12px;color:#999;padding:0 18px 14px;margin-top:-6px}
   @keyframes spin{to{transform:rotate(360deg)}}
   @keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-10px)}40%{transform:translateX(9px)}60%{transform:translateX(-6px)}80%{transform:translateX(4px)}}
@@ -118,6 +119,7 @@
       <button class="btn icon" id="rotR" title="Rotate last grabbed letter right (E)" aria-label="Rotate right">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
       </button>
+      <label class="hintsw" title="Showcase mode: explain what's wrong on Check"><input type="checkbox" id="hints" checked> Hints</label>
       <span class="msg" id="msg"></span>
       <button class="btn icon" id="refresh" title="New combination" aria-label="New combination">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M3 21v-5h5"/></svg>
@@ -287,6 +289,16 @@ function draw() {
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = '#000';
   ctx.fillRect(LINE.x1, LINE.y, LINE.x2 - LINE.x1, LINE.thick);
+  if (marks && performance.now() < marks.until) {
+    ctx.font = `bold 15px ${FAMILY}`;
+    ctx.textAlign = 'center';
+    for (const m of marks.items) {
+      ctx.fillStyle = m.ok ? '#1e8e3e' : '#d93025';
+      ctx.fillText(m.label, m.x, LINE.y + LINE.thick + 22);
+    }
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#000';
+  }
   ctx.font = FONT;
   const held = drag && drag.bodyB;
   for (const b of chars) if (b !== held) drawChar(b);
@@ -424,10 +436,43 @@ function angleOk(b, t) {
   if (Math.abs(norm(b.angle - t.angle)) < ANG_TOL) return true;
   return SYM180.has(t.ch) && Math.abs(norm(b.angle - t.angle - Math.PI)) < ANG_TOL;
 }
+// Showcase hints: explain exactly what's wrong
+let marks = null;
+const ISSUE_TEXT = {case: 'wrong case', char: 'wrong character', rotate: 'wrong orientation', extra: 'extra character'};
+function diagnose(placed) {
+  const issues = [], items = [];
+  if (placed.length < code.length) issues.push(`Only ${placed.length} of ${code.length} characters on the line`);
+  const sortStr = a => a.slice().sort().join('');
+  if (placed.length === code.length &&
+      sortStr(placed.map(b => b.ch)) === sortStr(code.map(t => t.ch)) &&
+      placed.some((b, i) => b.ch !== code[i].ch)) issues.push('Right characters, wrong order');
+  placed.forEach((b, i) => {
+    const t = code[i];
+    let label = '✓';
+    if (!t) label = 'extra';
+    else if (b.ch !== t.ch) label = b.ch.toLowerCase() === t.ch.toLowerCase() ? 'case' : 'char';
+    else if (!angleOk(b, t)) label = 'rotate';
+    const ok = label === '✓';
+    items.push({x: b.position.x, ok, label});
+    if (!ok) issues.push(`#${i + 1} "${b.ch}": ${ISSUE_TEXT[label]}`);
+  });
+  return {issues, items};
+}
+
 $('check').onclick = () => {
   const placed = onLine();
   const pass = placed.length === code.length &&
     placed.every((b, i) => b.ch === code[i].ch && angleOk(b, code[i]));
+  marks = null;
+  if (!pass && $('hints').checked) {
+    const d = diagnose(placed);
+    marks = {until: performance.now() + 4000, items: d.items};
+    const shown = d.issues.slice(0, 2).join(' · ');
+    const more = d.issues.length > 2 ? ` (+${d.issues.length - 2} more)` : '';
+    setMsg((shown || 'Nothing on the line yet') + more, 'bad');
+    modal.classList.remove('shake'); void modal.offsetWidth; modal.classList.add('shake');
+    return;
+  }
   if (pass) {
     setMsg('Verified. You are probably human.', 'ok');
     setTimeout(() => {
